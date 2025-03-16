@@ -1,0 +1,10 @@
+(library
+ (name webview)
+ (foreign_stubs
+  (language cxx)
+  (flags
+   (:standard -O2 --std=c++11))
+  (names webview_stubs))
+ (c_library_flags
+  ; (-framework Cocoa -framework WebKit -lstdc++ -ldl -Wl,-v)))
+  (-framework Cocoa -framework WebKit -lstdc++ -ldl)))

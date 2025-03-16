@@ -1,0 +1,4 @@
+(executable
+ (public_name pommes)
+ (name main)
+ (libraries webview unix eio eio_main))
