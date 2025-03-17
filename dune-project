@@ -19,7 +19,7 @@
  (name pommes)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml)
+ (depends ocaml eio eio_main yojson)
  (tags
   ("add topics" "to describe" your project)))
 

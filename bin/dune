@@ -1,4 +1,6 @@
 (executable
  (public_name pommes)
  (name main)
- (libraries webview unix eio eio_main))
+ (libraries webview unix eio eio_main yojson ppx_deriving_yojson.runtime)
+ (preprocess
+  (pps ppx_deriving_yojson)))
