@@ -95,34 +95,36 @@ let bind_test =
 </html>
 |}
 
-type request = {
-  request: string list
-} [@@deriving yojson]
-type command = {
-  request_id : string;
-  operation : string;
-  args : string
-}
+type request = { request : string list } [@@deriving yojson]
+type command = { request_id : string; operation : string; args : string }
 
 let parse_bind args : command =
-    let json = Printf.sprintf {| {"request": %s} |} args |> Yojson.Safe.from_string in
-    let parsed = request_of_yojson json |> Result.map_error ( fun e -> print_endline @@ "failed to parse: "^e) |> Result.get_ok  in
-    match parsed with
-    | {request=[request_id; operation; args]} -> {request_id;operation;args}
-    | _ -> failwith "wrong number of args"
+  let json =
+    Printf.sprintf {| {"request": %s} |} args |> Yojson.Safe.from_string
+  in
+  let parsed =
+    request_of_yojson json
+    |> Result.map_error (fun e -> print_endline @@ "failed to parse: " ^ e)
+    |> Result.get_ok
+  in
+  match parsed with
+  | { request = [ request_id; operation; args ] } ->
+      { request_id; operation; args }
+  | _ -> failwith "wrong number of args"
 
 let get_data _args =
-    let s = string_of_int (Random.bits ()) ^ string_of_int (Random.bits ()) in
+  let s = string_of_int (Random.bits ()) ^ string_of_int (Random.bits ()) in
   Printf.sprintf {| {"result": "%s"} |} s
 
 let router operation args =
   match operation with
-  | "getData" -> get_data args
+  | "getData" ->
+      Unix.sleep 5;
+      get_data args
   | "log" -> args
   | _ -> failwith "unknown operation"
 
 let main _env =
-  Switch.run @@ fun _sw ->
   let webview = Webview.create () in
 
   (* Configure the webview *)
@@ -132,25 +134,38 @@ let main _env =
   let _ = Webview.set_html webview bind_test in
   print_endline "Webview configured";
 
+  let jobs = Stream.create max_int in
 
+  let _worker_domain =
+    Domain.spawn (fun () ->
+    traceln "started worker domain";
+        while true do
+          match Stream.take_nonblocking jobs with
+          | Some { request_id; operation; args } ->
+              traceln "inputs: %s\n%s\n%s" request_id operation args;
+              let data = router operation args in
+              traceln "data: %s" data;
+              let eval_string =
+                Printf.sprintf {|window.handleNativeResponse("%s", %s, null)|}
+                  request_id data
+              in
+              traceln "Eval string %s" eval_string;
+              let _ =
+                Webview.eval webview eval_string
+                |> Result.iter_error (fun _ -> traceln "Error")
+              in
+              ()
+          | None ->
+              (* If the stream is empty, add a small delay to avoid busy waiting *)
+              Unix.sleepf 0.01
+        done)
+  in
   (match
-     Webview.bind webview "BINDER" (fun id req ->
-       let _ = Domain.spawn @@ fun  () ->
+     Webview.bind webview "BINDER" (fun _ req ->
          (* traceln "Hello there from js: %s %s" id req; *)
-         let {request_id; operation; args} = parse_bind req in
-         traceln "inputs: %s\n%s\n%s" request_id operation args;
-         let data = (router operation args) in
-         traceln "data: %s" data;
-         let eval_string = Printf.sprintf
-             {|window.handleNativeResponse("%s", %s, null)|} request_id  data in
-         (* traceln "Eval string %s" eval_string ; *)
-         let _ =
-           Webview.eval webview @@ eval_string
-           |> Result.iter_error (fun _ -> traceln "Error")
-         in
-         ()
-       in ()
-       )
+         let cmd = parse_bind req in
+         Stream.add jobs cmd;
+         traceln "Stream length %i" @@ Stream.length jobs)
    with
   | Ok () -> print_endline "Webview bound successfully."
   | Error code -> Printf.printf "Error binding webview: %i\n" code);
@@ -162,4 +177,3 @@ let main _env =
   print_endline (Printf.sprintf "Webview exited with result")
 
 let () = Eio_main.run main
-
