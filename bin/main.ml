@@ -116,10 +116,12 @@ let get_data _args =
   let s = string_of_int (Random.bits ()) ^ string_of_int (Random.bits ()) in
   Printf.sprintf {| {"result": "%s"} |} s
 
-let router operation args =
+
+let router env operation args =
   match operation with
   | "getData" ->
-      Unix.sleep 5;
+      (* Use Eio.Time.sleep instead of Unix.sleep *)
+      Eio.Time.sleep env 1.0;
       get_data args
   | "log" -> args
   | _ -> failwith "unknown operation"
@@ -135,30 +137,50 @@ let main _env =
   print_endline "Webview configured";
 
   let jobs = Stream.create max_int in
+  let webview_mutex = Eio.Mutex.create () in
+
 
   let _worker_domain =
+    (* we need another domain here, as  the main one will be taken over by the EIO unaware Webview.run *)
     Domain.spawn (fun () ->
-    traceln "started worker domain";
-        while true do
-          match Stream.take_nonblocking jobs with
-          | Some { request_id; operation; args } ->
-              traceln "inputs: %s\n%s\n%s" request_id operation args;
-              let data = router operation args in
-              traceln "data: %s" data;
-              let eval_string =
-                Printf.sprintf {|window.handleNativeResponse("%s", %s, null)|}
-                  request_id data
-              in
-              traceln "Eval string %s" eval_string;
-              let _ =
-                Webview.eval webview eval_string
-                |> Result.iter_error (fun _ -> traceln "Error")
-              in
-              ()
-          | None ->
-              (* If the stream is empty, add a small delay to avoid busy waiting *)
-              Unix.sleepf 0.01
-        done)
+        traceln "started worker domain";
+        (* always remember to run this on new domains *)
+        Eio_main.run (fun env ->
+            Switch.run @@ fun main_sw ->
+            (* Create a semaphore to limit concurrent jobs *)
+            let job_semaphore = Eio.Semaphore.make 10 in
+
+            (* Process jobs in a loop *)
+            while true do
+              (* This will block until something is available *)
+              let { request_id; operation; args } = Stream.take jobs in
+
+              (* Fork a new fiber for each job *)
+              Fiber.fork ~sw:main_sw (fun () ->
+                  (* Acquire the semaphore before processing *)
+                  Eio.Semaphore.acquire job_semaphore;
+                  Fun.protect
+                    (fun () ->
+                      (* Process the job *)
+                      let data = router (Eio.Stdenv.clock env) operation args in
+                      traceln "data: %s" data;
+
+                      let eval_string =
+                        Printf.sprintf
+                          {|window.handleNativeResponse("%s", %s, null)|}
+                          request_id data
+                      in
+                      traceln "Eval string %s" eval_string;
+
+                      (* If Webview.eval isn't thread-safe, add mutex here *)
+                      Eio.Mutex.use_ro webview_mutex @@ fun () ->
+                        Webview.eval webview eval_string
+                        |> Result.iter_error (fun _ -> traceln "Error")
+                      )
+                    ~finally:(fun () ->
+                      (* Release the semaphore when done *)
+                      Eio.Semaphore.release job_semaphore))
+            done))
   in
   (match
      Webview.bind webview "BINDER" (fun _ req ->
@@ -169,7 +191,6 @@ let main _env =
    with
   | Ok () -> print_endline "Webview bound successfully."
   | Error code -> Printf.printf "Error binding webview: %i\n" code);
-
 
   (* Run the webview in the main fiber *)
   print_endline "Running webview...";
