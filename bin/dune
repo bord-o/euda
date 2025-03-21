@@ -1,5 +1,5 @@
 (executable
- (public_name pommes)
+ (public_name euda)
  (name main)
  (libraries webview unix eio eio_main yojson ppx_deriving_yojson.runtime)
  (preprocess

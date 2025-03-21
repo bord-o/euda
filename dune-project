@@ -1,6 +1,6 @@
 (lang dune 3.17)
 
-(name pommes)
+(name euda)
 
 (generate_opam_files true)
 
@@ -16,7 +16,7 @@
 (documentation https://url/to/documentation)
 
 (package
- (name pommes)
+ (name euda)
  (synopsis "A short synopsis")
  (description "A longer description")
  (depends ocaml eio eio_main yojson)
